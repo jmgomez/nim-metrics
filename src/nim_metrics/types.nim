@@ -49,8 +49,18 @@ proc hash*(key: LabelKey): Hash =
 
 # Counter operations
 
+const InitialMetricCapacity* = 64
+  ## Pre-size the per-metric `values` Table so concurrent `inc`/`observe`
+  ## callers don't race on `tableimpl.checkIfInitialized → initImpl` during
+  ## the first request. Empirically this race causes SIGSEGV in
+  ## `tableimpl.nim` under NT≥2 because the {.global.} ensureHttpMetrics()
+  ## lazy-init in pragma.nim hands out partially-constructed Counters to
+  ## multiple threads simultaneously. A capacity-64 Table covers the
+  ## common case (route × status_code combinations) without runtime grow.
+
 proc newCounter*(name, help: string): Counter =
-  result = Counter(name: name, help: help)
+  result = Counter(name: name, help: help,
+                   values: initTable[LabelKey, float64](InitialMetricCapacity))
   initLock(result.lock)
 
 proc inc*(c: Counter, amount: float64 = 1.0, labels: Labels = @[]) {.gcsafe.} =
@@ -68,7 +78,8 @@ proc getValues*(c: Counter): Table[LabelKey, float64] {.gcsafe.} =
 # Gauge operations
 
 proc newGauge*(name, help: string): Gauge =
-  result = Gauge(name: name, help: help)
+  result = Gauge(name: name, help: help,
+                 values: initTable[LabelKey, float64](InitialMetricCapacity))
   initLock(result.lock)
 
 proc set*(g: Gauge, value: float64, labels: Labels = @[]) {.gcsafe.} =
@@ -97,7 +108,8 @@ proc getValues*(g: Gauge): Table[LabelKey, float64] {.gcsafe.} =
 # Histogram operations
 
 proc newHistogram*(name, help: string, buckets: seq[float64] = defaultBuckets): Histogram =
-  result = Histogram(name: name, help: help, buckets: buckets)
+  result = Histogram(name: name, help: help, buckets: buckets,
+                     values: initTable[LabelKey, HistogramData](InitialMetricCapacity))
   initLock(result.lock)
 
 proc observe*(h: Histogram, value: float64, labels: Labels = @[]) {.gcsafe.} =
